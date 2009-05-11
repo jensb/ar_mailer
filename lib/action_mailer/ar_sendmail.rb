@@ -182,7 +182,7 @@ end
                   create_timestamp.strftime '%a %b %d %H:%M:%S'
                 end
 
-      puts "%10d %8d %s %s %10d %s -> %s" % [email.id, size, created, Time.at(email.last_send_attempt) || ' '*19, email.attempts, email.from, email.to]
+      puts "%10d %8d %s   %s  %7d %s -> %s" % [email.id, size, created, Time.at(email.last_send_attempt) || ' '*19, email.attempts, email.from, email.to]
     end
 
     puts "-- #{total_size/1024} Kbytes in #{emails.length} Requests."
@@ -467,7 +467,7 @@ end
           res = session.send_message email.mail, email.from, email.to
           email.failed = false
           email.sent_at = Time.now
-          email.success_status = res.string
+          email.success_status = res.string rescue res.inspect # NOTE: some rubies return an Net::HTTP::Response here, others just a stupid String (dvd, 11-05-2009)
           
           log "#{self.class}#deliver sent email %011d from %s to %s: %p" %
                 [email.id, email.from, email.to, res]
