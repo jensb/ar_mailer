@@ -8,7 +8,7 @@ Gem::Specification.new do |s|
   s.authors = ["Eric Hodel", "Adam Meehan", "David Palm"]
   s.date = %q{2009-04-17}
   s.default_executable = %q{ar_sendmail}
-  s.description = %q{Even delivering email to the local machine may take too long when you have to send hundreds of messages.  ar_mailer allows you to store messages into the database for later delivery by a separate process, ar_sendmail.}
+  s.description = %q{Even delivering email to the local machine may take too long when you have to send hundreds of messages.  ar_mailer allows you to store messages into the database for later delivery by a separate process, ar_sendmail. This fork stores the email in the database for easy inspection and tracking.}
   s.email = %q{adam.meehan@gmail.com}
   s.executables = ["ar_sendmail"]
   s.extra_rdoc_files = ["History.txt", "LICENSE.txt", "Manifest.txt", "README.rdoc"]
