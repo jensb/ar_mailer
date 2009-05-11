@@ -19,7 +19,7 @@ Gem::Specification.new do |s|
   s.require_paths = ["lib"]
   s.rubyforge_project = %q{seattlerb}
   s.rubygems_version = %q{1.3.2}
-  s.summary = %q{A two-phase delivery agent for ActionMailer}
+  s.summary = %q{A two-phase delivery agent and outbox archive for ActionMailer}
   s.test_files = ["test/test_armailer.rb", "test/test_arsendmail.rb"]
 
   if s.respond_to? :specification_version then
