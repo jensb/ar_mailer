@@ -1,3 +1,8 @@
+= reason for fork
+The purpose of this fork is to keep an archive of sent/unsent emails.
+
+The Email class (or whatever you prefer to call it) in this for has different attributes.
+
 = ar_mailer
 
 A two-phase delivery agent for ActionMailer
@@ -38,11 +43,11 @@ First, if you haven't already:
 
 Then
 
-  $ sudo gem install adzap-ar_mailer
+  $ sudo gem install dvdplm-ar_mailer
 
 For Rails >= 2.1, in your environment.rb:
   
-  config.gem "adzap-ar_mailer", :lib => 'action_mailer/ar_mailer', :source => 'http://gems.github.com'
+  config.gem "dvdplm-ar_mailer", :lib => 'action_mailer/ar_mailer', :source => 'http://gems.github.com'
 
 For Rails 2.0, in an initializer file:
 

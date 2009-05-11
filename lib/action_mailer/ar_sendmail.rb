@@ -46,7 +46,7 @@ class ActionMailer::ARSendmail
   ##
   # The version of ActionMailer::ARSendmail you are running.
 
-  VERSION = '2.0.2'
+  VERSION = '2.0.3'
 
   ##
   # Maximum number of times authentication will be consecutively retried
@@ -102,16 +102,22 @@ class ActionMailer::ARSendmail
   # Creates a new migration using +table_name+ and prints it on stdout.
 
   def self.create_migration(table_name)
+    # TODO: add indexes where appropriate! (dvd, 11-05-2009)
     require 'active_support'
     puts <<-EOF
 class Create#{table_name.classify} < ActiveRecord::Migration
   def self.up
     create_table :#{table_name.tableize} do |t|
-      t.column :from, :string
       t.column :to, :string
-      t.column :last_send_attempt, :integer, :default => 0
+      t.column :from, :string
       t.column :mail, :text
-      t.column :created_on, :datetime
+      t.column :last_send_attempt, :integer, :default => 0
+      t.column :last_error, :text
+      t.column :attempts, :integer
+      t.column :failed, :boolean, :default => false
+      t.column :created_at, :datetime
+      t.column :updated_at, :datetime
+      t.column :sent_at, :datetime
     end
   end
 
@@ -129,6 +135,9 @@ end
     require 'active_support'
     puts <<-EOF
 class #{table_name.classify} < ActiveRecord::Base
+  def sent?
+    not failed? and not sent_at.nil?
+  end
 end
     EOF
   end
@@ -142,7 +151,7 @@ end
 
   def self.mailq(table_name)
     klass = table_name.split('::').inject(Object) { |k,n| k.const_get n }
-    emails = klass.find :all
+    emails = klass.find :all, :conditions => {:sent_at => nil, :failed? => false}
 
     if emails.empty? then
       puts "Mail queue is empty"
@@ -170,6 +179,7 @@ end
       puts "%10d %8d %s  %s" % [email.id, size, created, email.from]
       if email.last_send_attempt > 0 then
         puts "Last send attempt: #{Time.at email.last_send_attempt}"
+        puts "Attempt no: #{email.attempts}"
       end
       puts "                                         #{email.to}"
       puts
@@ -401,16 +411,16 @@ end
   # <tt>:Verbose</tt>:: Be verbose.
 
   def initialize(options = {})
-    options[:Delay] ||= 60
+    options[:Delay]     ||= 60
     options[:TableName] ||= 'Email'
-    options[:MaxAge] ||= 86400 * 7
+    options[:MaxAge]    ||= 86400 * 7
 
-    @batch_size = options[:BatchSize]
-    @delay = options[:Delay]
-    @email_class = options[:TableName].constantize
-    @once = options[:Once]
-    @verbose = options[:Verbose]
-    @max_age = options[:MaxAge]
+    @batch_size   = options[:BatchSize]
+    @delay        = options[:Delay]
+    @email_class  = options[:TableName].constantize
+    @once         = options[:Once]
+    @verbose      = options[:Verbose]
+    @max_age      = options[:MaxAge]
 
     @failed_auth_count = 0
   end
@@ -422,16 +432,17 @@ end
   def cleanup
     return if @max_age == 0
     timeout = Time.now - @max_age
-    conditions = ['last_send_attempt > 0 and created_on < ?', timeout]
-    mail = @email_class.destroy_all conditions
+    conditions = ['last_send_attempt > 0 and created_at < ?', timeout]
+    mail = @email_class.update_all({:failed => true}, conditions)
 
-    log "expired #{mail.length} emails from the queue"
+    log "#{self.class}#cleanup expired #{mail.length} emails from the queue"
   end
 
   ##
   # Delivers +emails+ to ActionMailer's SMTP server and destroys them.
 
   def deliver(emails)
+    log "#{self.class}#deliver Delivering #{emails.size} emails through '#{smtp_settings[:address]}' as '#{(smtp_settings[:user] || smtp_settings[:user_name])}'"
     settings = [
       smtp_settings[:domain],
       (smtp_settings[:user] || smtp_settings[:user_name]),
@@ -440,7 +451,7 @@ end
     ]
     
     smtp = Net::SMTP.new(smtp_settings[:address], smtp_settings[:port])
-    if smtp.respond_to?(:enable_starttls_auto)
+    if smtp.respond_to?(:enable_starttls_auto) # NOTE: Ruby 1.8.7+ has TLS support built in (dvd, 11-05-2009)
       smtp.enable_starttls_auto unless smtp_settings[:tls] == false
     else
       settings << smtp_settings[:tls]
@@ -450,36 +461,44 @@ end
       @failed_auth_count = 0
       until emails.empty? do
         email = emails.shift
+        email.last_send_attempt = Time.now.to_i
+        email.attempts.increment
         begin
           res = session.send_message email.mail, email.from, email.to
-          email.destroy
-          log "sent email %011d from %s to %s: %p" %
+          # email.destroy
+          email.failed = false
+          email.sent_at = Time.now
+          
+          log "#{self.class}#deliver sent email %011d from %s to %s: %p" %
                 [email.id, email.from, email.to, res]
         rescue Net::SMTPFatalError => e
-          log "5xx error sending email %d, removing from queue: %p(%s):\n\t%s" %
-                [email.id, e.message, e.class, e.backtrace.join("\n\t")]
-          email.destroy
+          log "#{self.class}#deliver 5xx error sending email %d, removing from queue: %p(%s):\n\t%s" % [email.id, e.message, e.class, e.backtrace.join("\n\t")]
+          email.last_error = "Exception: #{e.class}\n\nMessage:\n#{e.message}\n\nBacktrace:\n#{e.backtrace.join("\n\t")}"
+          email.failed = true
           session.reset
         rescue Net::SMTPServerBusy => e
-          log "server too busy, sleeping #{@delay} seconds"
+          log "#{self.class}#deliver server too busy, sleeping #{@delay} seconds"
+          email.last_error = "Exception: #{e.class}\n\nMessage:\n#{e.message}\n\nBacktrace:\n#{e.backtrace.join("\n\t")}"
+          email.save! # TODO: the return here means we have to save the email before, so the attempts count stays correct (dvd, 11-05-2009)
           sleep delay
           return
         rescue Net::SMTPUnknownError, Net::SMTPSyntaxError, TimeoutError => e
-          email.last_send_attempt = Time.now.to_i
-          email.save rescue nil
-          log "error sending email %d: %p(%s):\n\t%s" %
+          email.last_error = "Exception: #{e.class}\n\nMessage:\n#{e.message}\n\nBacktrace:\n#{e.backtrace.join("\n\t")}"
+          log "#{self.class}#deliver error sending email %d: %p(%s):\n\t%s" %
                 [email.id, e.message, e.class, e.backtrace.join("\n\t")]
           session.reset
         end
+        email.save!
       end
+
     end
   rescue Net::SMTPAuthenticationError => e
     @failed_auth_count += 1
     if @failed_auth_count >= MAX_AUTH_FAILURES then
-      log "authentication error, giving up: #{e.message}"
+      log "#{self.class}#deliver authentication error, giving up: #{e.message}"
       raise e
     else
-      log "authentication error, retrying: #{e.message}"
+      log "#{self.class}#deliver authentication error, retrying: #{e.message}"
     end
     sleep delay
   rescue Net::SMTPServerBusy, SystemCallError, OpenSSL::SSL::SSLError
@@ -490,7 +509,7 @@ end
   # Prepares ar_sendmail for exiting
 
   def do_exit
-    log "caught signal, shutting down"
+    log "#{self.class}#deliver caught signal, shutting down"
     self.class.remove_pid_file
     exit
   end
@@ -500,11 +519,12 @@ end
   # last 300 seconds.
 
   def find_emails
-    options = { :conditions => ['last_send_attempt < ?', Time.now.to_i - 300] }
+    # options = { :conditions => ['last_send_attempt < ? AND failed = 0', Time.now.to_i - 300] }
+    options = { :conditions => {:sent_at => nil, :failed => false}}
     options[:limit] = batch_size unless batch_size.nil?
     mail = @email_class.find :all, options
 
-    log "found #{mail.length} emails to send"
+    log "#{self.class}#deliver found #{mail.length} emails to send"
     mail
   end
 
@@ -521,7 +541,7 @@ end
 
   def log(message)
     $stderr.puts message if @verbose
-    ActionMailer::Base.logger.info "ar_sendmail: #{message}"
+    ActionMailer::Base.logger.info "ar_sendmail ==> #{message}"
   end
 
   ##
