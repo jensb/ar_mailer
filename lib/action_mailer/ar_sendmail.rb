@@ -119,6 +119,9 @@ class Create#{table_name.classify} < ActiveRecord::Migration
       t.column :updated_at, :datetime
       t.column :sent_at, :datetime
     end
+    
+    add_index :emails, :sent_at
+    add_index :emails, :failed
   end
 
   def self.down
@@ -135,6 +138,8 @@ end
     require 'active_support'
     puts <<-EOF
 class #{table_name.classify} < ActiveRecord::Base
+  validates_presence_of :from, :to, :mail
+
   def sent?
     not failed? and not sent_at.nil?
   end
