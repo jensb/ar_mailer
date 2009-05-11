@@ -160,7 +160,7 @@ end
 
     total_size = 0
 
-    puts "-Queue ID- --Size-- ----Arrival Time---- -----Sent At------ -Attempts- -Sender/Recipient--------------------------------------"
+    puts "-Queue ID- --Size-- ----Arrival Time---- -----Last attempt at------ -Attempts- -Sender/Recipient--------------------------------------"
     emails.each do |email|
       size = email.mail.length
       total_size += size
@@ -176,12 +176,7 @@ end
                   create_timestamp.strftime '%a %b %d %H:%M:%S'
                 end
 
-      puts "%10d %8d %s %s %10d %s -> %s" % [email.id, size, created, email.sent_at || ' '*19, email.attempts, email.from, email.to]
-      if email.last_send_attempt > 0 then
-        puts "Last send attempt: #{Time.at email.last_send_attempt}"
-        puts "Attempt no: #{email.attempts}"
-      end
-      puts
+      puts "%10d %8d %s %s %10d %s -> %s" % [email.id, size, created, Time.at(email.last_send_attempt) || ' '*19, email.attempts, email.from, email.to]
     end
 
     puts "-- #{total_size/1024} Kbytes in #{emails.length} Requests."
@@ -517,7 +512,6 @@ end
   # last 300 seconds.
 
   def find_emails
-    # options = { :conditions => ['last_send_attempt < ? AND failed = 0', Time.now.to_i - 300] }
     options = { :conditions => {:sent_at => nil, :failed => false}}
     options[:limit] = batch_size unless batch_size.nil?
     mail = @email_class.find :all, options
