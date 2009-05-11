@@ -151,7 +151,7 @@ end
 
   def self.mailq(table_name)
     klass = table_name.split('::').inject(Object) { |k,n| k.const_get n }
-    emails = klass.find :all, :conditions => {:sent_at => nil, :failed? => false}
+    emails = klass.find :all, :conditions => {:sent_at => nil, :failed => false}
 
     if emails.empty? then
       puts "Mail queue is empty"
@@ -160,7 +160,7 @@ end
 
     total_size = 0
 
-    puts "-Queue ID- --Size-- ----Arrival Time---- -Sender/Recipient-------"
+    puts "-Queue ID- --Size-- ----Arrival Time---- -----Sent At------ -Attempts- -Sender/Recipient--------------------------------------"
     emails.each do |email|
       size = email.mail.length
       total_size += size
@@ -176,12 +176,11 @@ end
                   create_timestamp.strftime '%a %b %d %H:%M:%S'
                 end
 
-      puts "%10d %8d %s  %s" % [email.id, size, created, email.from]
+      puts "%10d %8d %s %s %10d %s -> %s" % [email.id, size, created, email.sent_at || ' '*19, email.attempts, email.from, email.to]
       if email.last_send_attempt > 0 then
         puts "Last send attempt: #{Time.at email.last_send_attempt}"
         puts "Attempt no: #{email.attempts}"
       end
-      puts "                                         #{email.to}"
       puts
     end
 
@@ -435,7 +434,7 @@ end
     conditions = ['last_send_attempt > 0 and created_at < ?', timeout]
     mail = @email_class.update_all({:failed => true}, conditions)
 
-    log "#{self.class}#cleanup expired #{mail.length} emails from the queue"
+    log "#{self.class}#cleanup expired #{mail} emails from the queue"
   end
 
   ##
@@ -462,10 +461,9 @@ end
       until emails.empty? do
         email = emails.shift
         email.last_send_attempt = Time.now.to_i
-        email.attempts.increment
+        email.increment :attempts
         begin
           res = session.send_message email.mail, email.from, email.to
-          # email.destroy
           email.failed = false
           email.sent_at = Time.now
           
