@@ -46,7 +46,7 @@ class ActionMailer::ARSendmail
   ##
   # The version of ActionMailer::ARSendmail you are running.
 
-  VERSION = '2.0.3'
+  VERSION = '2.0.6'
 
   ##
   # Maximum number of times authentication will be consecutively retried
@@ -312,7 +312,7 @@ end
       end
 
       opts.on("--version", "Version of ARMailer") do
-        usage "ar_mailer #{VERSION} (adzap fork)"
+        usage "ar_mailer #{VERSION} (dvdplm fork)"
       end
 
       opts.separator ''
