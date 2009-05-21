@@ -46,7 +46,7 @@ class ActionMailer::ARSendmail
   ##
   # The version of ActionMailer::ARSendmail you are running.
 
-  VERSION = '2.0.7'
+  VERSION = '2.1'
 
   ##
   # Maximum number of times authentication will be consecutively retried
@@ -426,9 +426,9 @@ end
   end
 
   ##
-  # Removes emails that have lived in the queue for too long.  If max_age is
-  # set to 0, no emails will be removed.
-
+  # Removes unsent emails that have lived in the queue for too long. 
+  # If max_age is set to 0, no emails will be removed; max_age defaults
+  # to 7 days (86400 * 7)
   def cleanup
     return if @max_age == 0
     timeout = Time.now - @max_age
@@ -517,9 +517,10 @@ end
   ##
   # Returns emails in email_class that haven't had a delivery attempt in the
   # last 300 seconds.
-
+  # The records found are locked, so make sure you call this inside a
+  # transaction or otherwise manually release to locks
   def find_emails
-    options = { :conditions => ['sent_at IS NULL AND failed = 0 AND (? - last_send_attempt) > 300', Time.now.to_i]}
+    options = { :conditions => ['sent_at IS NULL AND failed = 0 AND (? - last_send_attempt) > 300', Time.now.to_i], :lock => true }
     options[:limit] = batch_size unless batch_size.nil?
     mail = @email_class.find :all, options
 
@@ -554,8 +555,10 @@ end
       now = Time.now
       begin
         cleanup
-        emails = find_emails
-        deliver(emails) unless emails.empty?
+        Email.transaction do
+          emails = find_emails
+          deliver(emails) unless emails.empty?
+        end
       rescue ActiveRecord::Transactions::TransactionError
       end
       break if @once
