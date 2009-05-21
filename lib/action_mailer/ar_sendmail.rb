@@ -46,7 +46,7 @@ class ActionMailer::ARSendmail
   ##
   # The version of ActionMailer::ARSendmail you are running.
 
-  VERSION = '2.0.6'
+  VERSION = '2.0.7'
 
   ##
   # Maximum number of times authentication will be consecutively retried
@@ -432,7 +432,7 @@ end
   def cleanup
     return if @max_age == 0
     timeout = Time.now - @max_age
-    conditions = ['last_send_attempt > 0 and created_at < ?', timeout]
+    conditions = ['last_send_attempt > 0 AND created_at < ? AND sent_at IS NULL', timeout]
     mail = @email_class.update_all({:failed => true}, conditions)
 
     log "#{self.class}#cleanup expired #{mail} emails from the queue"
@@ -519,7 +519,7 @@ end
   # last 300 seconds.
 
   def find_emails
-    options = { :conditions => {:sent_at => nil, :failed => false}}
+    options = { :conditions => ['sent_at IS NULL AND failed = 0 AND (? - last_send_attempt) > 300', Time.now.to_i]}
     options[:limit] = batch_size unless batch_size.nil?
     mail = @email_class.find :all, options
 
