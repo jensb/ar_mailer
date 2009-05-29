@@ -42,12 +42,21 @@ class TestARSendmail < MiniTest::Unit::TestCase
 class CreateMail < ActiveRecord::Migration
   def self.up
     create_table :mail do |t|
-      t.column :from, :string
       t.column :to, :string
-      t.column :last_send_attempt, :integer, :default => 0
+      t.column :from, :string
       t.column :mail, :text
-      t.column :created_on, :datetime
+      t.column :last_send_attempt, :integer, :default => 0
+      t.column :last_error, :text
+      t.column :success_status, :string
+      t.column :attempts, :integer
+      t.column :failed, :boolean, :default => false
+      t.column :created_at, :datetime
+      t.column :updated_at, :datetime
+      t.column :sent_at, :datetime
     end
+    
+    add_index :mail, :sent_at
+    add_index :mail, :failed
   end
 
   def self.down
@@ -66,6 +75,11 @@ end
 
     expected = <<-EOF
 class Mail < ActiveRecord::Base
+  validates_presence_of :from, :to, :mail
+
+  def sent?
+    not failed? and not sent_at.nil?
+  end
 end
     EOF
 
@@ -87,17 +101,10 @@ end
     end
 
     expected = <<-EOF
--Queue ID- --Size-- ----Arrival Time---- -Sender/Recipient-------
-         1        5 Thu Aug 10 11:19:49  nobody@example.com
-                                         recip@h1.example.com
-
-         2        5 Thu Aug 10 11:19:50  nobody@example.com
-                                         recip@h1.example.com
-
-         3        5 Thu Aug 10 11:19:51  nobody@example.com
-Last send attempt: Thu Aug 10 11:40:05 %s 2006
-                                         recip@h2.example.com
-
+-Queue ID- --Size-- ----Arrival Time---- -----Last attempt at------ -Attempts- -Sender/Recipient--------------------------------------
+         1        5 Thu Aug 10 11:19:49   Thu Jan 01 01:00:00 +0100 1970        0 nobody@example.com -> recip@h1.example.com
+         2        5 Thu Aug 10 11:19:50   Thu Jan 01 01:00:00 +0100 1970        0 nobody@example.com -> recip@h1.example.com
+         3        5 Thu Aug 10 11:19:51   Thu Aug 10 11:40:05 +0200 2006        0 nobody@example.com -> recip@h2.example.com
 -- 0 Kbytes in 3 Requests.
     EOF
 
@@ -365,10 +372,11 @@ Last send attempt: Thu Aug 10 11:40:05 %s 2006
     end
 
     assert_equal '', out
-    assert_equal "expired 1 emails from the queue\n", err
-    assert_equal 2, Email.records.length
+    assert_equal "ActionMailer::ARSendmail#cleanup expired 1 emails from the queue\n", err
+    assert_equal 3, Email.records.length    # we are not deleting sent emails
+    assert_equal true, Email.records[2].failed     # but instead setting #sent_at.
 
-    assert_equal [e1, e2], Email.records
+    assert_equal [e1, e2, e3], Email.records
   end
 
   def test_cleanup_disabled
@@ -395,11 +403,12 @@ Last send attempt: Thu Aug 10 11:40:05 %s 2006
 
     assert_equal 1, Net::SMTP.deliveries.length
     assert_equal ['body', 'from', 'to'], Net::SMTP.deliveries.first
-    assert_equal 0, Email.records.length
+    assert_equal 1, Email.records.length    # we are not deleting sent mails
+    refute_nil Email.records.first.sent_at  # but instead setting #sent_at.
     assert_equal 0, Net::SMTP.reset_called, 'Reset connection on SyntaxError'
 
     assert_equal '', out
-    assert_equal "sent email 00000000001 from from to to: \"queued\"\n", err
+    assert_equal "ActionMailer::ARSendmail#deliver sent email 00000000001 from from to to: \"queued\"\n", err
   end
 
   def test_deliver_not_called_when_no_emails
@@ -431,7 +440,7 @@ Last send attempt: Thu Aug 10 11:40:05 %s 2006
     assert_equal [60], @sm.slept
 
     assert_equal '', out
-    assert_equal "authentication error, retrying: try again\n", err
+    assert_equal "ActionMailer::ARSendmail#deliver authentication error, retrying: try again\n", err
   end
 
   def test_deliver_auth_error_recover
@@ -460,7 +469,7 @@ Last send attempt: Thu Aug 10 11:40:05 %s 2006
     end
 
     assert_equal 2, @sm.failed_auth_count
-    assert_equal "authentication error, giving up: try again\n", err
+    assert_equal "ActionMailer::ARSendmail#deliver authentication error, giving up: try again\n", err
   end
 
   def test_deliver_4xx_error
@@ -484,7 +493,7 @@ Last send attempt: Thu Aug 10 11:40:05 %s 2006
     assert_equal 1, Net::SMTP.reset_called, 'Reset connection on SyntaxError'
 
     assert_equal '', out
-    assert_equal "error sending email 1: \"try again\"(Net::SMTPSyntaxError):\n\tone\n\ttwo\n\tthree\n", err
+    assert_equal "ActionMailer::ARSendmail#deliver error sending email 1: \"try again\"(Net::SMTPSyntaxError):\n\tone\n\ttwo\n\tthree\n", err
   end
 
   def test_deliver_5xx_error
@@ -503,11 +512,13 @@ Last send attempt: Thu Aug 10 11:40:05 %s 2006
     end
 
     assert_equal 0, Net::SMTP.deliveries.length
-    assert_equal 0, Email.records.length
+    assert_equal 1, Email.records.length    # we are not deleting sent mails
+    assert_nil Email.records.first.sent_at  # but instead setting sent_at
+    refute_nil Email.records.first.last_send_attempt  # but instead setting sent_at
     assert_equal 1, Net::SMTP.reset_called, 'Reset connection on SyntaxError'
 
     assert_equal '', out
-    assert_equal "5xx error sending email 1, removing from queue: \"unknown recipient\"(Net::SMTPFatalError):\n\tone\n\ttwo\n\tthree\n", err
+    assert_equal "ActionMailer::ARSendmail#deliver 5xx error sending email 1, removing from queue: \"unknown recipient\"(Net::SMTPFatalError):\n\tone\n\ttwo\n\tthree\n", err
   end
 
   def test_deliver_errno_epipe
@@ -554,7 +565,7 @@ Last send attempt: Thu Aug 10 11:40:05 %s 2006
     assert_equal [60], @sm.slept
 
     assert_equal '', out
-    assert_equal "server too busy, sleeping 60 seconds\n", err
+    assert_equal "ActionMailer::ARSendmail#deliver server too busy, sleeping 60 seconds\n", err
   end
 
   def test_deliver_syntax_error
@@ -575,12 +586,14 @@ Last send attempt: Thu Aug 10 11:40:05 %s 2006
     end
 
     assert_equal 1, Net::SMTP.deliveries.length, 'delivery count'
-    assert_equal 1, Email.records.length
+    assert_equal 2, Email.records.length  # we are not deleting sent mails
+    refute_nil Email.records[1].sent_at  # but instead setting sent_at
+    assert_nil Email.records[0].sent_at  # but instead setting sent_at
     assert_equal 1, Net::SMTP.reset_called, 'Reset connection on SyntaxError'
     assert_operator now, :<=, Email.records.first.last_send_attempt
 
     assert_equal '', out
-    assert_equal "error sending email 1: \"blah blah blah\"(Net::SMTPSyntaxError):\n\tone\n\ttwo\n\tthree\nsent email 00000000002 from from to to: \"queued\"\n", err
+    assert_equal "ActionMailer::ARSendmail#deliver error sending email 1: \"blah blah blah\"(Net::SMTPSyntaxError):\n\tone\n\ttwo\n\tthree\nActionMailer::ARSendmail#deliver sent email 00000000002 from from to to: \"queued\"\n", err
   end
 
   def test_deliver_timeout
@@ -604,7 +617,7 @@ Last send attempt: Thu Aug 10 11:40:05 %s 2006
     assert_equal 1, Net::SMTP.reset_called, 'Reset connection on Timeout'
 
     assert_equal '', out
-    assert_equal "error sending email 1: \"timed out\"(Timeout::Error):\n\tone\n\ttwo\n\tthree\n", err
+    assert_equal "ActionMailer::ARSendmail#deliver error sending email 1: \"timed out\"(Timeout::Error):\n\tone\n\ttwo\n\tthree\n", err
   end
 
   def test_do_exit
@@ -615,7 +628,7 @@ Last send attempt: Thu Aug 10 11:40:05 %s 2006
     end
 
     assert_equal '', out
-    assert_equal "caught signal, shutting down\n", err
+    assert_equal "ActionMailer::ARSendmail#deliver caught signal, shutting down\n", err
   end
 
   def test_log
@@ -649,7 +662,7 @@ Last send attempt: Thu Aug 10 11:40:05 %s 2006
     assert_equal emails, found_emails
 
     assert_equal '', out
-    assert_equal "found 3 emails to send\n", err
+    assert_equal "ActionMailer::ARSendmail#deliver found 3 emails to send\n", err
   end
 
   def test_smtp_settings

@@ -117,8 +117,9 @@ class Email
 
   START = Time.parse 'Thu Aug 10 2006 11:19:48'
 
-  attr_accessor :from, :to, :mail, :last_send_attempt, :created_on, :id
-
+  attr_accessor :from, :to, :mail, :last_send_attempt, :created_on, :id,
+    :last_error, :success_status, :attempts, :failed, :created_at, :updated_at, :sent_at, :scheduled_at
+  
   @records = []
   @id = 0
 
@@ -178,6 +179,30 @@ class Email
   end
 
   def save
+  end
+  
+  # Force saving (dummy)
+  def save!
+  end
+  
+  # Update AR dummy for #cleanup
+  def self.update_all(data, what)
+    i=0
+    timeout = Time.now - 7*86400    # default
+    records.each do |r|
+      if !r.last_send_attempt.nil? and r.last_send_attempt.to_i > 0 and r.created_on < timeout and r.sent_at.nil?
+        #puts("expiring #{r.inspect}")
+        r.failed = true 
+        i+=1
+      end
+    end
+    i
+  end
+  
+  # Increment attribute (AR dummy)
+  def increment(what, by=1)
+    self.send("#{what}=", 0) unless self.send(what)
+    self.send("#{what}=", self.send(what) + by)
   end
 
 end

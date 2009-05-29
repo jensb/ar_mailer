@@ -121,8 +121,8 @@ class Create#{table_name.classify} < ActiveRecord::Migration
       t.column :sent_at, :datetime
     end
     
-    add_index :emails, :sent_at
-    add_index :emails, :failed
+    add_index :#{table_name.tableize}, :sent_at
+    add_index :#{table_name.tableize}, :failed
   end
 
   def self.down
@@ -439,10 +439,10 @@ end
   end
 
   ##
-  # Delivers +emails+ to ActionMailer's SMTP server and destroys them.
+  # Delivers +emails+ to ActionMailer's SMTP server and on success, sets #sent_at.
 
   def deliver(emails)
-    log "#{self.class}#deliver Delivering #{emails.size} emails through '#{smtp_settings[:address]}' as '#{(smtp_settings[:user] || smtp_settings[:user_name])}'"
+    #log "#{self.class}#deliver Delivering #{emails.size} emails through '#{smtp_settings[:address]}' as '#{(smtp_settings[:user] || smtp_settings[:user_name])}'"
     settings = [
       smtp_settings[:domain],
       (smtp_settings[:user] || smtp_settings[:user_name]),
